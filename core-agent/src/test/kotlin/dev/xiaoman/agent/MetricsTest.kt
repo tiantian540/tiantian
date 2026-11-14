@@ -20,7 +20,7 @@ class MetricsTest {
 
         assertTrue(outcome.success)
         assertEquals(2, h.operator.requests.size)
-        assertEquals(listOf(Action.Tap(nodeId = 0)), h.device.performed)
+        assertEquals(listOf<Action>(Action.Tap(nodeId = 0)), h.device.performed)
         assertEquals(2, lines.count { it.startsWith("op step=") })
         assertEquals(1, lines.count { it.startsWith("exec step=") })
         val firstOp = lines.first { it.startsWith("op step=") }

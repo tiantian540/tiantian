@@ -144,17 +144,19 @@ class OverlayGestureTest {
             val ctor = AccessibilityService.ScreenshotResult::class.java
                 .getConstructor(HardwareBuffer::class.java, ColorSpace::class.java)
             val colorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
-            { ctor.newInstance(buffer, colorSpace) as AccessibilityService.ScreenshotResult }
+            ctor.newInstance(buffer, colorSpace) as AccessibilityService.ScreenshotResult
         }.getOrNull()
         assumeTrue(
             "Robolectric 无法构造 HardwareBuffer/ScreenshotResult，此项无法在本环境验证",
             buffer != null && newResult != null,
         )
+        // assumeTrue 为假时会直接跳过本用例，走到这里 newResult 一定非空。
+        val screenshotResult = requireNotNull(newResult)
         val controller = Robolectric.buildService(XiaomanAccessibilityService::class.java).create()
         val service = controller.get()
         var decoded = 0
         try {
-            GestureShadow.screenshotSuccess = newResult
+            GestureShadow.screenshotSuccess = { screenshotResult }
             val screen = AccessibilityDevice(
                 { service }, service, settleDelayMs = 0,
                 decodeFrame = { _, _ ->
@@ -365,7 +367,7 @@ class OverlayGestureTest {
         fun getRootInActiveWindow(): AccessibilityNodeInfo? = readRoot()
 
         @Implementation
-        fun takeScreenshot(displayId: Int, executor: Executor, callback: AccessibilityService.TakeScreenshotCallback) {
+        override fun takeScreenshot(displayId: Int, executor: Executor, callback: AccessibilityService.TakeScreenshotCallback) {
             screenshotCalls++
             events += "screenshot"
             val success = screenshotSuccess
