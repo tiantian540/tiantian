@@ -293,15 +293,15 @@ class OverlayGestureTest {
      * observable ordering, not on wall-clock time: Robolectric's frozen clock and the one-second
      * screenshot throttle make millisecond comparisons meaningless here.
      */
-    @Test fun parallelObserveReadsNodesWhileTheScreenshotCallbackIsPending() = runBlocking {
+    @Test fun parallelObserveReadsNodesWhileTheScreenshotCallbackIsPending() = runBlocking<Unit> {
         val controller = Robolectric.buildService(XiaomanAccessibilityService::class.java).create()
         val service = controller.get()
         try {
-            val parallelPending = screenshotPendingDuringNodeRead(service, serial = false)
-            val serialPending = screenshotPendingDuringNodeRead(service, serial = true)
+            val parallelPending: Boolean = screenshotPendingDuringNodeRead(service, serial = false)
+            val serialPending: Boolean = screenshotPendingDuringNodeRead(service, serial = true)
             println("screenshot pending during node read: parallel=$parallelPending serial=$serialPending")
-            assertTrue("并发路径读节点时截图回调应仍在进行中", parallelPending)
-            assertFalse("串行路径读节点时截图回调应已完成", serialPending)
+            assertTrue(parallelPending, "并发路径读节点时截图回调应仍在进行中")
+            assertFalse(serialPending, "串行路径读节点时截图回调应已完成")
         } finally {
             GestureShadow.reset()
             controller.destroy()
