@@ -188,7 +188,7 @@ internal class ChatTools(
     }
 
     private suspend fun writeSkill(args: JsonObject, taskId: String, emit: (AgentEvent) -> Unit): String {
-        val writer = author ?: error("这里不能创建技能")
+        val writer = author ?: return error("这里不能创建技能")
         val written = writer.author(
             taskId,
             SkillAuthor.Draft(
