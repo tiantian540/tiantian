@@ -1,10 +1,15 @@
 name: Verify observe (stage 1)
 
-# 临时验证用：只跑阶段 1 涉及的两个模块，把每个测试用例的结果（含 skipped）打印出来；
-# 同一个 job 里再用同一套 JDK/SDK 打一个 debug APK，供真机验证阶段 2 的本地快路径。
+# 临时验证用：只跑阶段 1 涉及的两个模块，把每个测试用例的结果（含 skipped）打印出来。
+# debug APK 默认不打：只有手动触发并勾选 build_apk 时才会执行 Assemble / Upload 两步。
 # 用法：推送 verify-stage1 / verify-stage2 分支后到 Actions 页面查看，或手动点 "Run workflow"。
 on:
   workflow_dispatch:
+    inputs:
+      build_apk:
+        description: "构建并上传 debug APK（默认关闭）"
+        type: boolean
+        default: false
   push:
     branches: [verify-stage1, verify-stage2]
 
@@ -62,11 +67,14 @@ jobs:
             hands/build/test-results/
       # scripts/gradle.sh 默认把产物放到仓库外（~/.cache/xiaoman/<hash>/out），这里显式指到
       # 工作区内，下面的 artifact 路径才是确定的。--online 去掉脚本默认的 --offline，CI 需要联网拉依赖。
+      # 仅在手动触发并勾选 build_apk 时打包；普通 push 只跑测试。
       - name: Assemble debug APK
+        if: inputs.build_apk
         run: bash scripts/gradle.sh --online :app:assembleDebug --console=plain --stacktrace
         env:
           XIAOMAN_BUILD_DIR: ${{ github.workspace }}/.ci-build
       - name: Upload debug APK
+        if: inputs.build_apk
         uses: actions/upload-artifact@v4
         with:
           name: app-debug-apk
