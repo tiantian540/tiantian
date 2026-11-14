@@ -44,7 +44,7 @@ class OverlayController(
                     }
                     owner = service
                 }
-                overlay?.update(status ?: "小满")
+                overlay?.update(status ?: "天天")
             }
     }
 

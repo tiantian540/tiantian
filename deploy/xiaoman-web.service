@@ -1,7 +1,7 @@
-# systemd unit for the 小满 web server. install.sh copies it to /etc/systemd/system/xiaoman-web.service.
+# systemd unit for the 天天 web server. install.sh copies it to /etc/systemd/system/xiaoman-web.service.
 # Settings (access code, timezone, JVM memory) live in /etc/xiaoman-web/env, readable by root and the service only.
 [Unit]
-Description=小满网页版 (xiaoman web-server)
+Description=天天网页版 (xiaoman web-server)
 After=network-online.target
 Wants=network-online.target
 

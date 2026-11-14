@@ -20,7 +20,7 @@ internal object AppLinks {
         if (uri.scheme?.lowercase() != SCHEME) return null
         return when ("${uri.host.orEmpty()}${uri.path.orEmpty()}".trimEnd('/')) {
             "alarm/set" -> setAlarm(uri)
-            else -> throw IllegalArgumentException("不支持的小满链接：$uri（目前只支持 xiaoman://alarm/set）")
+            else -> throw IllegalArgumentException("不支持的天天链接：$uri（目前只支持 xiaoman://alarm/set）")
         }
     }
 

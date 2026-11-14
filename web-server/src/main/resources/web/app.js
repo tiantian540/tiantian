@@ -236,9 +236,9 @@ if (typeof document !== 'undefined') {
       const kb = Math.ceil(new TextEncoder().encode(JSON.stringify(notes)).length / 1024);
       $('memory-count').textContent = notes.length ? '共 ' + notes.length + ' 条，约 ' + kb + ' KB' : '';
       $('memory-warning').hidden = payload.dropped === 0;
-      $('memory-warning').textContent = '记忆太多，最早的 ' + payload.dropped + ' 条暂时不会发给小满。可以删掉不需要的。';
+      $('memory-warning').textContent = '记忆太多，最早的 ' + payload.dropped + ' 条暂时不会发给天天。可以删掉不需要的。';
       $('clear-memory').disabled = !notes.length;
-      if (!notes.length) { list.append(node('p', 'muted', '还没有记忆。聊天时说「记住……」，小满就会记在这里。')); return; }
+      if (!notes.length) { list.append(node('p', 'muted', '还没有记忆。聊天时说「记住……」，天天就会记在这里。')); return; }
       for (const note of [...notes].sort((a, b) => b.updatedAt - a.updatedAt)) {
         const item = node('article', 'memory-item');
         const top = node('div', 'service-top');
@@ -370,7 +370,7 @@ if (typeof document !== 'undefined') {
         el.append(line);
       } else if (row.type === 'approval' || row.type === 'question') {
         const card = node('div', 'action-card');
-        card.append(node('span', 'eyebrow', row.type === 'approval' ? '需要你确认' : '小满问'));
+        card.append(node('span', 'eyebrow', row.type === 'approval' ? '需要你确认' : '天天问'));
         card.append(node('h3', '', row.type === 'approval' ? row.title || '允许这次调用吗？' : row.question));
         if (row.type === 'approval') {
           card.append(node('p', 'muted', '服务：' + (row.server || '未知') + ' · 工具：' + (row.tool || '未知')));
@@ -730,7 +730,7 @@ if (typeof document !== 'undefined') {
     });
     $('clear-memory').addEventListener('click', () => {
       if (busy) { notify('请等本次对话结束后再清空记忆。'); return; }
-      if (!window.confirm('清空这台设备上小满的全部记忆？此操作不能撤销。')) return;
+      if (!window.confirm('清空这台设备上天天的全部记忆？此操作不能撤销。')) return;
       notes = []; remove('memory'); renderMemory(); notify('记忆已清空。');
     });
     // Another tab of the same site changed memory: pick it up.

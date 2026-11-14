@@ -390,7 +390,7 @@ class ClaimService(
     private fun display(ms: Long) = DISPLAY.format(Instant.ofEpochMilli(ms).atZone(zone))
 
     companion object {
-        const val PHRASE = "领取小满令牌"
+        const val PHRASE = "领取天天令牌"
         const val LABEL = "论坛:"
         private const val CODE = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
         private const val BATCH = 50
