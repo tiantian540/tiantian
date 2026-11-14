@@ -18,11 +18,15 @@ jobs:
           distribution: temurin
           java-version: "17"
       # :hands 是 Android library，它的单元测试和 :app 都需要 Android SDK。
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # runner 已预装 Android SDK（ANDROID_HOME=/usr/local/lib/android/sdk，含 platform-tools
+      # 且 sdkmanager 已在 PATH 上），所以不再用 android-actions/setup-android@v3：
+      # 它的默认 packages 含已从仓库下线的 `tools`，会让 sdkmanager 报
+      # "Failed to find package 'tools'" 并以退出码 1 失败。
       # 显式装 platform 35，避免首次构建时 AGP 自己下载卡住（compileSdk / targetSdk 都是 35）。
       - name: Install SDK platform 35
-        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+        run: |
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
       - name: core-agent 与 hands 单元测试
         run: ./gradlew :core-agent:test :hands:testDebugUnitTest --console=plain --stacktrace
