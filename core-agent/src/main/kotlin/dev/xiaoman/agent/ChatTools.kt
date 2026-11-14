@@ -32,6 +32,8 @@ internal class ChatTools(
     private val reminders: ReminderScheduler,
     private val external: ToolProvider?,
     private val phoneTasks: Boolean = true,
+    /** Null when this build has no writable skill folder (tests, web server). */
+    private val author: SkillAuthor? = null,
     private val phoneTask: suspend (goal: String, skill: String?) -> AgentEvent.PhoneTaskFinished,
 ) {
     suspend fun execute(call: ToolCall, taskId: String, emit: (AgentEvent) -> Unit): String = try {
@@ -44,12 +46,15 @@ internal class ChatTools(
             AgentTools.LIST_SKILLS -> listSkills()
             AgentTools.REMINDER_SET -> reminder(args)
             AgentTools.PHONE_TASK -> if (phoneTasks) phone(args) else error("这里不能操作手机，请用其他工具或告诉用户自己操作")
+            AgentTools.AUTHOR_SKILL -> writeSkill(args, taskId, emit)
             else -> external(call, taskId, emit)
         }
     } catch (e: CancellationException) {
         throw e
     } catch (e: ToolArgumentException) {
         error("参数错误：${e.message}")
+    } catch (e: SkillRejected) {
+        error(e.message ?: "技能没有保存")
     } catch (e: Exception) {
         error("工具执行失败：${e.message ?: e::class.simpleName}")
     }
@@ -180,6 +185,28 @@ internal class ChatTools(
         val result = external?.call(taskId, call.name, call.argumentsJson) ?: return error("未知工具 ${call.name}")
         emit(AgentEvent.ToolCalled(taskId, call.name, result.ok, result.summary))
         return result.text
+    }
+
+    private suspend fun writeSkill(args: JsonObject, taskId: String, emit: (AgentEvent) -> Unit): String {
+        val writer = author ?: error("这里不能创建技能")
+        val written = writer.author(
+            taskId,
+            SkillAuthor.Draft(
+                name = required(args, "name"),
+                description = required(args, "description"),
+                apps = JsonText.stringList(args, "apps"),
+                instructions = required(args, "instructions"),
+                steps = JsonText.stringList(args, "steps"),
+            ),
+            emit,
+        )
+        return buildJsonObject {
+            put("ok", true)
+            put("name", written.name)
+            put("path", written.path)
+            put("hasFlow", written.hasFlow)
+            put("message", "技能已保存并重新加载，现在就能使用")
+        }.toString()
     }
 
     private suspend fun phone(args: JsonObject): String {

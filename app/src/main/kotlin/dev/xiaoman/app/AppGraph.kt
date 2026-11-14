@@ -195,6 +195,8 @@ class AppGraph(context: Context, private val llm: LlmClientFactory = LlmClients.
             idFactory = runIds::next,
             externalTools = mcpFor(key.second),
             metrics = loopMetrics,
+            skillsDir = skillsDir,
+            bundledSkillsDir = bundledSkillsDir,
         )
         cachedAgent = key to agent
         return agent

@@ -26,6 +26,7 @@ import dev.xiaoman.api.UserChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File
 import java.util.UUID
 
 /**
@@ -41,7 +42,7 @@ class XiaomanAgent(
     private val memory: MemoryStore,
     private val skills: SkillRepository,
     sentinel: Sentinel,
-    users: UserChannel,
+    private val users: UserChannel,
     private val reminders: ReminderScheduler,
     private val config: AgentConfig = AgentConfig(),
     private val persona: String = Prompts.DEFAULT_PERSONA,
@@ -51,6 +52,10 @@ class XiaomanAgent(
     private val externalTools: ToolProvider? = null,
     /** Optional timing sink for the operator loop (diagnostic only); exceptions it throws are ignored. */
     private val metrics: ((String) -> Unit)? = null,
+    /** Folder the assistant may write new skills into (the same one `cli push` targets); null disables author_skill. */
+    private val skillsDir: File? = null,
+    /** Bundled skills folder, so author_skill can refuse names that would shadow built-ins. */
+    private val bundledSkillsDir: File? = null,
 ) : Agent {
     private val loop = OperatorLoop(operator, device, sentinel, users, config, metrics)
     private val flows = FlowRunner(loop, users)
@@ -60,7 +65,8 @@ class XiaomanAgent(
     override suspend fun handle(userMessage: String, listener: AgentListener, stop: StopSignal) {
         val taskId = idFactory()
         val emit: (AgentEvent) -> Unit = listener::onEvent
-        val tools = ChatTools(memory, skills, clock, reminders, externalTools, phoneTasks = config.phoneTasks) { goal, skill ->
+        val author = skillsDir?.let { SkillAuthor(it, bundledSkillsDir, skills, users) }
+        val tools = ChatTools(memory, skills, clock, reminders, externalTools, phoneTasks = config.phoneTasks, author = author) { goal, skill ->
             runPhoneTask(goal, skill, listener, stop)
         }
         try {

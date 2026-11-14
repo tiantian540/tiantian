@@ -17,6 +17,7 @@ object AgentTools {
     const val LIST_SKILLS = "list_skills"
     const val REMINDER_SET = "reminder_set"
     const val PHONE_TASK = "phone_task"
+    const val AUTHOR_SKILL = "author_skill"
 
     val specs: List<ToolSpec> = listOf(
         ToolSpec(
@@ -71,6 +72,21 @@ object AgentTools {
                 listOf("goal"),
                 "goal" to str("具体目标，包含关键参数，如 用高德打车回家（北京市海淀区某某路 1 号），选快车"),
                 "skill" to str("可选，使用的技能名"),
+            ),
+        ),
+        ToolSpec(
+            AUTHOR_SKILL,
+            "把用户描述的重复流程保存成技能。只有用户明确要求记住、以后都这么做、或存成技能时使用；保存前会请用户确认全文。",
+            schema(
+                listOf("name", "description", "instructions"),
+                "name" to str("技能名，小写字母、数字、横线，如 wechat-send"),
+                "description" to str("一句话简介，之后靠它挑技能"),
+                "apps" to arr("适用 App 的包名", str("包名，如 com.tencent.mm")),
+                "instructions" to str("正文 Markdown：分步写清怎么操作、什么时候问用户、什么时候结束"),
+                "steps" to arr(
+                    "可选，固定步骤，每项是 flow.yaml 里的一行，如 launch: com.tencent.mm、tap: 发送",
+                    str("一行步骤"),
+                ),
             ),
         ),
     )
