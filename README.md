@@ -55,7 +55,7 @@ scripts/gradle.sh test :app:assembleDebug            # 之后可以离线构建
 3. 按提示开启天天无障碍服务。
 4. 回到「聊天」，试试：「帮我打车回家」「记住我家在……」「把 Wi-Fi 打开」。
 
-以火山方舟为例，Base URL 填 `https://ark.cn-beijing.volces.com/api/v3`（也是默认值），模型填方舟上的模型或接入点 ID。
+默认是 DeepSeek：Base URL `https://api.deepseek.com`，模型 `deepseek-flash`，两项都能在「设置」里改。换别的服务时填对应的 Base URL 和模型名，例如火山方舟的 `https://ark.cn-beijing.volces.com/api/v3` 和接入点 ID。
 
 ## 课堂实践
 

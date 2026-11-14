@@ -7,7 +7,7 @@ import dev.xiaoman.api.ModelRole
 /** One OpenAI-compatible endpoint as typed into Settings. [toString] never shows [apiKey]. */
 data class ModelSettings(
     val baseUrl: String = DEFAULT_BASE_URL,
-    val model: String = "",
+    val model: String = DEFAULT_MODEL,
     val apiKey: String = "",
     val temperature: Double? = null,
 ) {
@@ -25,8 +25,11 @@ data class ModelSettings(
         "ModelSettings(baseUrl=$baseUrl, model=$model, apiKey=${if (apiKey.isEmpty()) "<unset>" else "***"}, temperature=$temperature)"
 
     companion object {
-        /** Volcano Ark. */
-        const val DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+        /** DeepSeek（OpenAI 兼容）。设置页里可以改成任意兼容服务。 */
+        const val DEFAULT_BASE_URL = "https://api.deepseek.com"
+
+        /** 默认模型；只在用户没有保存过设置时生效，设置页里可以改。 */
+        const val DEFAULT_MODEL = "deepseek-flash"
     }
 }
 
@@ -59,7 +62,7 @@ data class SettingsForm(
 ) {
     data class ModelForm(
         val baseUrl: String = ModelSettings.DEFAULT_BASE_URL,
-        val model: String = "",
+        val model: String = ModelSettings.DEFAULT_MODEL,
         val apiKey: String = "",
         val temperature: String = "",
     ) {

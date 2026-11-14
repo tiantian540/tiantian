@@ -53,11 +53,12 @@ function parseSseChunk(buffer) {
 }
 
 /* Model settings: mode "own" (baseUrl/model/apiKey) or "class" (a class token issued by the instructor). */
+const DEFAULT_MODEL = 'deepseek-flash';
 function cleanModel(value, defaultUrl) {
   const v = value && typeof value === 'object' ? value : {};
   const text = key => typeof v[key] === 'string' ? v[key] : '';
   return {mode: v.mode === 'class' ? 'class' : 'own', baseUrl: typeof v.baseUrl === 'string' ? v.baseUrl : defaultUrl,
-    model: text('model'), apiKey: text('apiKey'), classToken: text('classToken')};
+    model: text('model') || DEFAULT_MODEL, apiKey: text('apiKey'), classToken: text('classToken')};
 }
 /** Whether chatting is possible with these settings; class mode needs the server to offer it. */
 function modelReady(model, classEnabled) {
@@ -152,7 +153,7 @@ function linkify(value) {
 if (typeof document !== 'undefined') {
   (() => {
     const $ = id => document.getElementById(id);
-    const DEFAULT_URL = 'https://ark.cn-beijing.volces.com/api/v3';
+    const DEFAULT_URL = 'https://api.deepseek.com';
     const prefix = 'xiaoman.';
     const knownTypes = new Set(['user', 'reply', 'tool', 'memory', 'approval', 'question', 'reminder', 'warning', 'error']);
     function read(key, fallback, session = false) {

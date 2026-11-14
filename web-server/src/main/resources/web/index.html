@@ -43,12 +43,12 @@
       <div class="page-heading"><div><h1>让天天准备好</h1><p>填好模型信息，就可以聊天了。</p></div></div>
       <section class="panel"><h2>模型设置</h2><form id="model-form" class="fields">
         <fieldset id="model-mode" class="mode-choice" hidden><legend>用哪种方式连接模型</legend>
-          <label><input type="radio" name="model-mode" value="own" checked>自带 Key（自己的方舟账号）</label>
+          <label><input type="radio" name="model-mode" value="own" checked>自带 Key（自己的模型账号）</label>
           <label><input type="radio" name="model-mode" value="class">使用课堂令牌（讲师发的 xm- 开头的令牌）</label>
         </fieldset>
         <div id="own-fields" class="fields">
-          <label>模型地址<input id="model-url" type="url" required placeholder="https://ark.cn-beijing.volces.com/api/v3" autocomplete="off" spellcheck="false"></label>
-          <label>模型名或接入点 ID<input id="model-name" required placeholder="例如：你的接入点 ID" autocomplete="off" spellcheck="false"></label>
+          <label>模型地址<input id="model-url" type="url" required placeholder="https://api.deepseek.com" autocomplete="off" spellcheck="false"></label>
+          <label>模型名或接入点 ID<input id="model-name" required placeholder="例如：deepseek-flash" autocomplete="off" spellcheck="false"></label>
           <label>API Key<span class="secret-field"><input id="model-key" type="password" required autocomplete="off" spellcheck="false" placeholder="粘贴你的 API Key"><button type="button" data-reveal="model-key" aria-label="显示 API Key">显示</button></span></label>
           <p class="muted">Key 只保存在这台手机的浏览器里，每次对话时发给天天服务器转发，服务器不保存。</p>
         </div>

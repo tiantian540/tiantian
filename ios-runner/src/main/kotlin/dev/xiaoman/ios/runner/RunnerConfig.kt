@@ -68,7 +68,7 @@ data class RunnerConfig(
 
     companion object {
         const val DEFAULT_WDA_URL = "http://127.0.0.1:8100"
-        const val DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+        const val DEFAULT_BASE_URL = "https://api.deepseek.com"
         val COMMANDS = setOf("check", "dump", "task", "chat", "ask", "tools", "call")
         private val SECRET_KEY = Regex("key|secret|token|password", RegexOption.IGNORE_CASE)
 

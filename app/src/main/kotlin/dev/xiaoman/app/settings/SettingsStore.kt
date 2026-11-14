@@ -48,7 +48,7 @@ class SettingsStore(private val plain: SharedPreferences, internal val secret: S
 
     private fun model(prefix: String) = ModelSettings(
         baseUrl = plain.getString(prefix + BASE_URL, null) ?: ModelSettings.DEFAULT_BASE_URL,
-        model = plain.getString(prefix + MODEL, null).orEmpty(),
+        model = plain.getString(prefix + MODEL, null) ?: ModelSettings.DEFAULT_MODEL,
         apiKey = secret.getString(prefix + API_KEY, null).orEmpty(),
         temperature = plain.getString(prefix + TEMPERATURE, null)?.toDoubleOrNull(),
     )

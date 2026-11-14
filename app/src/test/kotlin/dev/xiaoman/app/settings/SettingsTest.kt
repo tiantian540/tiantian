@@ -29,9 +29,11 @@ class SettingsTest {
         learnFromSuccess = false,
     )
 
-    @Test fun `defaults point at Volcano Ark and are not configured`() {
+    @Test fun `defaults point at DeepSeek and are not configured`() {
         val s = store().current
-        assertEquals("https://ark.cn-beijing.volces.com/api/v3", s.chat.baseUrl)
+        assertEquals("https://api.deepseek.com", s.chat.baseUrl)
+        assertEquals("deepseek-flash", s.chat.model)
+        assertEquals("deepseek-flash", s.operator.model)
         assertFalse(s.configured)
     }
 

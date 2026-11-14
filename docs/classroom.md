@@ -13,7 +13,7 @@
 1. 注册火山引擎账号，完成实名认证。
 2. 进入方舟控制台，开通模型。讲师用的是 `doubao-seed-2-1-pro-260915`。天天要填两个模型：聊天模型和操作模型，操作模型要能看图，用同一个也行。
 3. 创建 API Key，只填进手机 App，不要发到群里、写进代码或截图公开。
-4. 记下 Base URL：`https://ark.cn-beijing.volces.com/api/v3`（App 里默认就是它）。
+4. 记下 Base URL：`https://ark.cn-beijing.volces.com/api/v3`（App 默认是 DeepSeek 的 `https://api.deepseek.com`，用方舟时改成这个）。
 5. 看一眼免费额度、推理限额和“安心体验”开关。
 
 用别家模型也可以，只要兼容 OpenAI 接口、有 Key 和 Base URL，比如阿里云百炼、OpenRouter。
