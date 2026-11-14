@@ -27,13 +27,27 @@ class XiaomanAccessibilityService : AccessibilityService() {
     /** Activity-name lookups are cached; window-state events are frequent. */
     private val activityCache = HashMap<ComponentName, Boolean>()
 
+    /**
+     * Monotonic counter of events that may change the visible UI. Only written on the service's
+     * main thread; read by [AccessibilityDevice] to flag observations that straddled a change.
+     */
+    @Volatile
+    var changeCount = 0L
+        private set
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         _instance.value = this
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null || event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (event == null) return
+        when (event.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> changeCount++
+        }
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         val pkg = event.packageName?.toString() ?: return
         val cls = event.className?.toString()
         if (cls != null && isActivity(ComponentName(pkg, cls))) {

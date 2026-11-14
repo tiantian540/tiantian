@@ -6,7 +6,9 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.ColorSpace
 import android.graphics.Path
+import android.hardware.HardwareBuffer
 import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Bundle
@@ -21,9 +23,14 @@ import dev.xiaoman.api.Action
 import dev.xiaoman.api.ActionResult
 import dev.xiaoman.api.AppInfo
 import dev.xiaoman.api.Device
+import dev.xiaoman.api.NodeOnlyObservation
 import dev.xiaoman.api.Point
 import dev.xiaoman.api.ScreenState
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
@@ -37,6 +44,33 @@ import kotlin.coroutines.resume
 class ServiceNotConnectedException : IllegalStateException(AccessibilityDevice.NOT_CONNECTED)
 
 /**
+ * Timings of one [AccessibilityDevice.observe] call, in milliseconds. Diagnostic only: the loop's
+ * behaviour never depends on these values.
+ */
+data class ObserveMetrics(
+    /** Whole call while the overlay is hidden (excludes hiding and restoring it). */
+    val totalMs: Long,
+    /** Time spent waiting for the one-screenshot-per-second rate limit (all attempts). */
+    val screenshotThrottleMs: Long,
+    /** Screenshot request until its callback (all attempts). */
+    val screenshotMs: Long,
+    /** Hardware bitmap to PNG encoding. */
+    val encodeMs: Long,
+    /** Reading and compacting the node tree. */
+    val nodesMs: Long,
+    /** Offset from the start of the call to the moment node reading begins. */
+    val nodesStartOffsetMs: Long,
+    val nodeCount: Int,
+    val widthPx: Int,
+    val heightPx: Int,
+    val packageName: String?,
+    /** False for [AccessibilityDevice.observeNodesUnsafeForSecurity], which skips the screenshot entirely. */
+    val withScreenshot: Boolean = true,
+    /** See [ScreenState.changedDuringCapture]. */
+    val changedDuringCapture: Boolean = false,
+)
+
+/**
  * [Device] backed by [XiaomanAccessibilityService].
  *
  * @param serviceProvider returns the connected service or null; usually `{ XiaomanAccessibilityService.instance.value }`.
@@ -44,6 +78,12 @@ class ServiceNotConnectedException : IllegalStateException(AccessibilityDevice.N
  * @param maxNodes cap of the compact node list.
  * @param settleDelayMs pause after every action so the UI can react before the next observation.
  * @param overlay when set, it is hidden during screenshots and dispatched touch gestures.
+ * @param metrics optional receiver of per-observation timings; exceptions it throws are ignored.
+ * @param serialObserve when true, falls back to the old strict ordering (screenshot, encode, then
+ *   read nodes) instead of overlapping the screenshot request with the node read. Escape hatch if
+ *   concurrent screenshot + node enumeration misbehaves on a device.
+ * @param decodeFrame turns a captured frame into an ARGB bitmap. Production keeps the hardware
+ *   buffer implementation; tests replace it because Robolectric cannot wrap a HardwareBuffer.
  */
 class AccessibilityDevice(
     private val serviceProvider: () -> XiaomanAccessibilityService?,
@@ -51,6 +91,9 @@ class AccessibilityDevice(
     private val maxNodes: Int = NodeCompactor.DEFAULT_MAX_NODES,
     private val settleDelayMs: Long = 600,
     var overlay: StatusOverlay? = null,
+    private val metrics: ((ObserveMetrics) -> Unit)? = null,
+    var serialObserve: Boolean = false,
+    private val decodeFrame: (HardwareBuffer, ColorSpace) -> Bitmap? = ::wrapHardwareBuffer,
 ) : Device {
 
     private val appContext: Context = context.applicationContext ?: context
@@ -63,42 +106,127 @@ class AccessibilityDevice(
 
     // ---------------------------------------------------------------- observe
 
-    override suspend fun observe(): ScreenState = mutex.withLock {
+    override suspend fun observe(): ScreenState = capture(withScreenshot = true)
+
+    @NodeOnlyObservation
+    override suspend fun observeNodesUnsafeForSecurity(): ScreenState = capture(withScreenshot = false)
+
+    private suspend fun capture(withScreenshot: Boolean): ScreenState = mutex.withLock {
         val service = serviceProvider() ?: throw ServiceNotConnectedException()
         // Keep screenshots and node enumeration on the same unobstructed screen. Restoring the
         // pill between them can put its Stop button into the model's node list.
-        overlay?.hiddenWhile { observeUnobstructed(service) } ?: observeUnobstructed(service)
+        overlay?.hiddenWhile { observeUnobstructed(service, withScreenshot) }
+            ?: observeUnobstructed(service, withScreenshot)
     }
 
-    private suspend fun observeUnobstructed(service: XiaomanAccessibilityService): ScreenState {
+    /**
+     * Requests the screenshot first, then reads the node tree while the screenshot callback is
+     * still pending, and only then awaits the encoded PNG. The node tree therefore no longer waits
+     * behind the one-second screenshot rate limit or the PNG encoding.
+     */
+    private suspend fun observeUnobstructed(
+        service: XiaomanAccessibilityService,
+        withScreenshot: Boolean,
+    ): ScreenState = coroutineScope {
+        val startedAt = SystemClock.uptimeMillis()
+        val timing = Timing()
+        val changesAtStart = service.changeCount
         val (w, h) = displaySize(service)
-        val shot = captureScreenshot(service)
+
+        var shot: Shot? = null
+        var pendingShot: Deferred<Shot>? = null
+        if (withScreenshot) {
+            awaitScreenshotSlot(timing)
+            if (serialObserve) {
+                shot = captureShot(service, timing)
+            } else {
+                // UNDISPATCHED issues takeScreenshot before this coroutine suspends, so the request
+                // and the node read below are as close to the same instant as the APIs allow.
+                pendingShot = async(start = CoroutineStart.UNDISPATCHED) { captureShot(service, timing) }
+            }
+        }
+
+        val nodesAt = SystemClock.uptimeMillis()
+        timing.nodesStartOffsetMs = nodesAt - startedAt
         val (pkg, nodes) = withContext(Dispatchers.Default) { readNodes(service, w, h) }
+        timing.nodesMs = SystemClock.uptimeMillis() - nodesAt
+
+        val captured = shot ?: pendingShot?.await() ?: Shot(null, secure = false)
         val foreground = service.foreground.value
-        return ScreenState(
-            screenshotPng = shot.png,
+        val packageName = pkg ?: foreground?.packageName
+        val state = ScreenState(
+            screenshotPng = captured.png,
             widthPx = w,
             heightPx = h,
-            packageName = pkg ?: foreground?.packageName,
+            packageName = packageName,
             activityName = foreground?.activityName?.takeIf { pkg == null || foreground.packageName == pkg },
             nodes = nodes,
-            secure = shot.secure,
+            secure = captured.secure,
+            changedDuringCapture = service.changeCount != changesAtStart,
         )
+        reportObserve(startedAt, timing, state, withScreenshot)
+        return@coroutineScope state
+    }
+
+    /** Timings of the stages inside one observation; only touched while [mutex] is held. */
+    private class Timing {
+        var screenshotThrottleMs = 0L
+        var screenshotMs = 0L
+        var encodeMs = 0L
+        var nodesMs = 0L
+        var nodesStartOffsetMs = 0L
+    }
+
+    /** Diagnostic only: a throwing receiver must never change what [observe] returns. */
+    private fun reportObserve(startedAt: Long, timing: Timing, state: ScreenState, withScreenshot: Boolean) {
+        val report = metrics ?: return
+        runCatching {
+            report(
+                ObserveMetrics(
+                    totalMs = SystemClock.uptimeMillis() - startedAt,
+                    screenshotThrottleMs = timing.screenshotThrottleMs,
+                    screenshotMs = timing.screenshotMs,
+                    encodeMs = timing.encodeMs,
+                    nodesMs = timing.nodesMs,
+                    nodesStartOffsetMs = timing.nodesStartOffsetMs,
+                    nodeCount = state.nodes.size,
+                    widthPx = state.widthPx,
+                    heightPx = state.heightPx,
+                    packageName = state.packageName,
+                    withScreenshot = withScreenshot,
+                    changedDuringCapture = state.changedDuringCapture,
+                ),
+            )
+        }
     }
 
     private class Shot(val png: ByteArray?, val secure: Boolean)
 
-    private suspend fun captureScreenshot(service: XiaomanAccessibilityService): Shot {
+    /** Android allows one takeScreenshot per second per service. */
+    private suspend fun awaitScreenshotSlot(timing: Timing) {
+        val wait = lastScreenshotAt + SCREENSHOT_INTERVAL_MS - SystemClock.uptimeMillis()
+        if (wait > 0) {
+            delay(wait)
+            timing.screenshotThrottleMs += wait
+        }
+    }
+
+    private suspend fun captureShot(service: XiaomanAccessibilityService, timing: Timing): Shot {
         repeat(SCREENSHOT_ATTEMPTS) {
-            // Android allows one takeScreenshot per second per service.
-            val wait = lastScreenshotAt + SCREENSHOT_INTERVAL_MS - SystemClock.uptimeMillis()
-            if (wait > 0) delay(wait)
+            val requestedAt = SystemClock.uptimeMillis()
             val result = takeScreenshot(service)
+            timing.screenshotMs += SystemClock.uptimeMillis() - requestedAt
             lastScreenshotAt = SystemClock.uptimeMillis()
             when (result) {
-                is RawShot.Ok -> return withContext(Dispatchers.Default) { encode(result.bitmap) }
+                is RawShot.Ok -> {
+                    val encodeStartedAt = SystemClock.uptimeMillis()
+                    val shot = withContext(Dispatchers.Default) { encode(result.bitmap) }
+                    timing.encodeMs += SystemClock.uptimeMillis() - encodeStartedAt
+                    return shot
+                }
                 is RawShot.Failed -> when (result.code) {
-                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> Unit // retry after the interval
+                    // The slot was taken before the first attempt; wait it out before retrying.
+                    AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT -> awaitScreenshotSlot(timing)
                     AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW -> return Shot(null, secure = true)
                     else -> {
                         Log.w(TAG, "takeScreenshot failed: ${result.code}")
@@ -122,10 +250,10 @@ class AccessibilityDevice(
                 service.takeScreenshot(Display.DEFAULT_DISPLAY, direct, object : AccessibilityService.TakeScreenshotCallback {
                     override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
                         val buffer = result.hardwareBuffer
+                        // A platform-level failure here (bad format, missing native) must not leave the
+                        // coroutine suspended forever: always resume, degraded to "no screenshot".
                         val bitmap = try {
-                            Bitmap.wrapHardwareBuffer(buffer, result.colorSpace)?.let { hw ->
-                                hw.copy(Bitmap.Config.ARGB_8888, false).also { hw.recycle() }
-                            }
+                            runCatching { decodeFrame(buffer, result.colorSpace) }.getOrNull()
                         } finally {
                             buffer.close()
                         }
@@ -393,3 +521,9 @@ class AccessibilityDevice(
         private const val MAX_WAIT_MS = 30_000L
     }
 }
+
+/** Production frame conversion: hardware buffer → software ARGB bitmap, then release the wrapper. */
+private fun wrapHardwareBuffer(buffer: HardwareBuffer, colorSpace: ColorSpace): Bitmap? =
+    Bitmap.wrapHardwareBuffer(buffer, colorSpace)?.let { hw ->
+        hw.copy(Bitmap.Config.ARGB_8888, false).also { hw.recycle() }
+    }

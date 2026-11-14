@@ -17,6 +17,7 @@ import dev.xiaoman.api.LlmException
 import dev.xiaoman.api.MemoryStore
 import dev.xiaoman.api.ModelConfig
 import dev.xiaoman.api.ModelRole
+import dev.xiaoman.api.NodeOnlyObservation
 import dev.xiaoman.api.Note
 import dev.xiaoman.api.Observation
 import dev.xiaoman.api.ReminderScheduler
@@ -56,8 +57,21 @@ class FakeDevice(vararg screens: ScreenState) : Device {
     val performed = mutableListOf<Action>()
     var onPerform: (Action) -> Unit = {}
     var observations = 0
+    var screenshotObservations = 0
+    var nodesOnlyObservations = 0
 
     override suspend fun observe(): ScreenState {
+        screenshotObservations++
+        return nextScreen()
+    }
+
+    @NodeOnlyObservation
+    override suspend fun observeNodesUnsafeForSecurity(): ScreenState {
+        nodesOnlyObservations++
+        return nextScreen()
+    }
+
+    private fun nextScreen(): ScreenState {
         observeError?.let { throw it }
         observations++
         return if (queue.size > 1) queue.removeFirst() else queue.first()
@@ -167,9 +181,10 @@ class Harness(
     val reminders: FakeReminderScheduler = FakeReminderScheduler(),
     val config: AgentConfig = AgentConfig(),
     val clock: () -> Long = { 1000L },
+    val metrics: ((String) -> Unit)? = null,
 ) {
     private var ids = 0
-    val agent = XiaomanAgent(chat, operator, device, memory, skills, sentinel, users, reminders, config, clock = clock, idFactory = { "t${++ids}" })
+    val agent = XiaomanAgent(chat, operator, device, memory, skills, sentinel, users, reminders, config, clock = clock, idFactory = { "t${++ids}" }, metrics = metrics)
     val events = Events()
     val stop = Stop()
 }

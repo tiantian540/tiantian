@@ -56,6 +56,11 @@ class ScreenState(
     /** True when the foreground window forbids capture (FLAG_SECURE: payment, password pages). */
     val secure: Boolean = false,
     val capturedAtMillis: Long = System.currentTimeMillis(),
+    /**
+     * Advisory: accessibility change events arrived while this state was being captured, so the
+     * screenshot and/or the node tree may not be from the same instant. Nothing decides on it yet.
+     */
+    val changedDuringCapture: Boolean = false,
 ) {
     /** Stable fingerprint of what is on screen (package + node texts), used for stuck detection. */
     fun fingerprint(): String = buildString {
@@ -115,9 +120,32 @@ data class ActionResult(val ok: Boolean, val message: String? = null)
 @Serializable
 data class AppInfo(val packageName: String, val label: String)
 
+/**
+ * Opt-in marker for node-only observations. They skip the screenshot, so [ScreenState.secure] is
+ * always false and [ScreenState.screenshotPng] is always null. Any use for a security decision
+ * (FLAG_SECURE, password or payment pages) would silently miss the protected page, so callers must
+ * opt in explicitly and a future misuse fails to compile.
+ */
+@RequiresOptIn(
+    message = "节点-only 观测不截图，secure 恒为 false，不能用于安全判断；需要安全判断请用 observe()",
+    level = RequiresOptIn.Level.ERROR,
+)
+@Retention(AnnotationRetention.BINARY)
+@Target(AnnotationTarget.FUNCTION, AnnotationTarget.CLASS)
+annotation class NodeOnlyObservation
+
 /** The phone's hands and eyes. Implemented on Android by the accessibility service; faked in tests. */
 interface Device {
     suspend fun observe(): ScreenState
+
+    /**
+     * Node-tree only observation for checks that do not need a picture (e.g. waiting for an
+     * approval card to disappear). It never takes a screenshot, so [ScreenState.secure] is false
+     * even on a FLAG_SECURE page — the name says so on purpose. Devices that cannot skip the
+     * screenshot fall back to [observe].
+     */
+    @NodeOnlyObservation
+    suspend fun observeNodesUnsafeForSecurity(): ScreenState = observe()
 
     /** Executes one non-terminal action (not [Action.AskUser] or [Action.Finish]). */
     suspend fun perform(action: Action): ActionResult

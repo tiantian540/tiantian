@@ -6,6 +6,7 @@ import dev.xiaoman.api.AgentEvent
 import dev.xiaoman.api.AuditRecord
 import dev.xiaoman.api.AuditSink
 import dev.xiaoman.api.Device
+import dev.xiaoman.api.NodeOnlyObservation
 import dev.xiaoman.api.ScreenState
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -51,6 +52,9 @@ class TraceRecorder(
             }
             return screen
         }
+
+        @NodeOnlyObservation
+        override suspend fun observeNodesUnsafeForSecurity(): ScreenState = delegate.observeNodesUnsafeForSecurity()
 
         override suspend fun perform(action: Action): ActionResult {
             val result = delegate.perform(action)

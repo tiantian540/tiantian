@@ -19,8 +19,12 @@ class ApprovalScreenTest {
     private val tap = Action.Tap(point = Point(870, 820), target = "二等座预订")
 
     private suspend fun execute(after: ScreenState, stopDuringApproval: Boolean = false,
-                                restored: ScreenState? = null): Pair<Executed, FakeDevice> {
-        val device = FakeDevice(*listOfNotNull(after, restored).toTypedArray())
+                                restored: ScreenState? = null): Pair<Executed, FakeDevice> =
+        executeAll(stopDuringApproval, *listOfNotNull(after, restored).toTypedArray())
+
+    private suspend fun executeAll(stopDuringApproval: Boolean = false,
+                                   vararg screens: ScreenState): Pair<Executed, FakeDevice> {
+        val device = FakeDevice(*screens)
         val stop = Stop()
         val gate = object : Sentinel {
             override suspend fun guard(context: GuardContext, action: Action) = Decision.Ask("确认预订入口", "预订")
@@ -58,6 +62,8 @@ class ApprovalScreenTest {
         assertIs<Executed.Done>(result)
         assertEquals(listOf<Action>(tap), device.performed)
         assertEquals(1, device.observations)
+        assertEquals(1, device.screenshotObservations)
+        assertEquals(0, device.nodesOnlyObservations)
     }
 
     @Test fun waitsForAppSwitchBeforeUsingApprovedCoordinates() = runTest {
@@ -65,6 +71,16 @@ class ApprovalScreenTest {
         assertIs<Executed.Done>(result)
         assertEquals(listOf<Action>(tap), device.performed)
         assertEquals(2, device.observations)
+        assertEquals(1, device.screenshotObservations)
+        assertEquals(1, device.nodesOnlyObservations)
+    }
+
+    @Test fun approvalRetriesUseNodesOnlyObservations() = runTest {
+        val (result, device) = executeAll(false, screen("dev.xiaoman.app", "允许一次"),
+            screen("dev.xiaoman.app", "允许一次"), before)
+        assertIs<Executed.Done>(result)
+        assertEquals(1, device.screenshotObservations)
+        assertEquals(2, device.nodesOnlyObservations)
     }
 
     @Test fun secureScreenDoesNotWaitForLaterReturn() = runTest {

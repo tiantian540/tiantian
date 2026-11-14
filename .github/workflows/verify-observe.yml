@@ -1,0 +1,65 @@
+name: Verify observe (stage 1)
+
+# 临时验证用：只跑阶段 1 涉及的两个模块，把每个测试用例的结果（含 skipped）打印出来；
+# 同一个 job 里再用同一套 JDK/SDK 打一个 debug APK，供真机验证阶段 2 的本地快路径。
+# 用法：推送 verify-stage1 / verify-stage2 分支后到 Actions 页面查看，或手动点 "Run workflow"。
+on:
+  workflow_dispatch:
+  push:
+    branches: [verify-stage1, verify-stage2]
+
+jobs:
+  observe-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      # :hands 是 Android library，它的单元测试和 :app 都需要 Android SDK。
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+      # 显式装 platform 35，避免首次构建时 AGP 自己下载卡住（compileSdk / targetSdk 都是 35）。
+      - name: Install SDK platform 35
+        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: core-agent 与 hands 单元测试
+        run: ./gradlew :core-agent:test :hands:testDebugUnitTest --console=plain --stacktrace
+      - name: 汇总用例结果
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          for f in sorted(glob.glob('**/build/test-results/**/*.xml', recursive=True)):
+              root = ET.parse(f).getroot()
+              print(f"{f}: tests={root.get('tests')} failures={root.get('failures')} "
+                    f"errors={root.get('errors')} skipped={root.get('skipped')}")
+              for case in root.iter('testcase'):
+                  if case.find('skipped') is not None:
+                      print(f"  SKIPPED {case.get('classname')}.{case.get('name')}")
+                  for failure in list(case.iter('failure')) + list(case.iter('error')):
+                      print(f"  FAILED {case.get('classname')}.{case.get('name')}: {failure.get('message')}")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: observe-test-reports
+          path: |
+            core-agent/build/reports/tests/
+            core-agent/build/test-results/
+            hands/build/reports/tests/
+            hands/build/test-results/
+      # scripts/gradle.sh 默认把产物放到仓库外（~/.cache/xiaoman/<hash>/out），这里显式指到
+      # 工作区内，下面的 artifact 路径才是确定的。--online 去掉脚本默认的 --offline，CI 需要联网拉依赖。
+      - name: Assemble debug APK
+        run: bash scripts/gradle.sh --online :app:assembleDebug --console=plain --stacktrace
+        env:
+          XIAOMAN_BUILD_DIR: ${{ github.workspace }}/.ci-build
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug-apk
+          path: .ci-build/app/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

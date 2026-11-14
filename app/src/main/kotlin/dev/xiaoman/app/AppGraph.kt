@@ -13,6 +13,7 @@ import dev.xiaoman.app.trace.RecordingDevice
 import dev.xiaoman.app.trace.TraceWriter
 import dev.xiaoman.hands.AccessibilityDevice
 import dev.xiaoman.hands.MutableStopSignal
+import dev.xiaoman.hands.ObserveMetrics
 import dev.xiaoman.hands.XiaomanAccessibilityService
 import dev.xiaoman.llm.LlmClientFactory
 import dev.xiaoman.llm.LlmClients
@@ -113,7 +114,36 @@ class AppGraph(context: Context, private val llm: LlmClientFactory = LlmClients.
         )
     }
 
-    val accessibilityDevice by lazy { AccessibilityDevice({ XiaomanAccessibilityService.instance.value }, app) }
+    /**
+     * Debug-build timings of the accessibility layer, logged as `timing observe ...` under the
+     * `Xiaoman` tag; null in release builds. Diagnostic only.
+     */
+    private val observeMetrics: ((ObserveMetrics) -> Unit)? =
+        if (BuildConfig.DEBUG) {
+            { m ->
+                Log.i(
+                    TAG,
+                    "timing observe total=${m.totalMs}ms throttle=${m.screenshotThrottleMs}ms " +
+                        "shot=${m.screenshotMs}ms encode=${m.encodeMs}ms nodes=${m.nodesMs}ms " +
+                        "nodeStart=${m.nodesStartOffsetMs}ms nodeCount=${m.nodeCount} " +
+                        "size=${m.widthPx}x${m.heightPx} pkg=${m.packageName} " +
+                        "withShot=${m.withScreenshot} changed=${m.changedDuringCapture}",
+                )
+            }
+        } else null
+
+    /** Debug-build timings of the operator loop, logged as `timing op ...` / `timing exec ...`. */
+    private val loopMetrics: ((String) -> Unit)? =
+        if (BuildConfig.DEBUG) ({ line -> Log.i(TAG, "timing $line") }) else null
+
+    val accessibilityDevice by lazy {
+        AccessibilityDevice(
+            { XiaomanAccessibilityService.instance.value },
+            app,
+            metrics = observeMetrics,
+            serialObserve = FALLBACK_TO_SERIAL_OBSERVE,
+        )
+    }
 
     private val device by lazy { RecordingDevice(accessibilityDevice, traces::saveScreenshot) }
 
@@ -164,6 +194,7 @@ class AppGraph(context: Context, private val llm: LlmClientFactory = LlmClients.
             config = current.agentConfig(),
             idFactory = runIds::next,
             externalTools = mcpFor(key.second),
+            metrics = loopMetrics,
         )
         cachedAgent = key to agent
         return agent
@@ -201,5 +232,15 @@ class AppGraph(context: Context, private val llm: LlmClientFactory = LlmClients.
 
     companion object {
         const val TAG = "Xiaoman"
+
+        /**
+         * Stage 1 escape hatch. `true` = fall back to the old serial ordering "screenshot → encode →
+         * read nodes"; `false` = request the screenshot first and read nodes while its callback is
+         * still pending.
+         *
+         * To roll back: set this constant to `true`, rebuild the APK, reinstall. No other change is
+         * needed; there is deliberately no runtime switch.
+         */
+        const val FALLBACK_TO_SERIAL_OBSERVE = false
     }
 }

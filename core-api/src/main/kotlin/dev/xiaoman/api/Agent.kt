@@ -53,6 +53,11 @@ data class AgentConfig(
     val operatorNotes: String = "",
     /** Offer `phone_task` to the chat model. Off where there is no phone to operate, e.g. the web version. */
     val phoneTasks: Boolean = true,
+    /**
+     * Try [dev.xiaoman.api.Device] node picking locally for flow steps with a written-down target
+     * (tap/type) before asking the model. Off by default; see docs/FAST_PATH.md.
+     */
+    val localFastPath: Boolean = false,
 )
 
 /** Cooperative cancellation from the overlay's Stop button. */

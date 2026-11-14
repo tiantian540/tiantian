@@ -49,8 +49,10 @@ class XiaomanAgent(
     private val idFactory: () -> String = { UUID.randomUUID().toString() },
     /** Extra tools such as MCP servers; their names must not shadow the built-in ones. */
     private val externalTools: ToolProvider? = null,
+    /** Optional timing sink for the operator loop (diagnostic only); exceptions it throws are ignored. */
+    private val metrics: ((String) -> Unit)? = null,
 ) : Agent {
-    private val loop = OperatorLoop(operator, device, sentinel, users, config)
+    private val loop = OperatorLoop(operator, device, sentinel, users, config, metrics)
     private val flows = FlowRunner(loop, users)
     private val historyLock = Mutex()
     private val history = ArrayDeque<ChatMessage>()

@@ -4,6 +4,7 @@ import dev.xiaoman.api.Action
 import dev.xiaoman.api.ActionResult
 import dev.xiaoman.api.AppInfo
 import dev.xiaoman.api.Device
+import dev.xiaoman.api.NodeOnlyObservation
 import dev.xiaoman.api.ScreenState
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,10 @@ class RecordingDevice(
         screen.screenshotPng?.let { png -> withContext(io) { record(png) } }
         return screen
     }
+
+    /** Nodes-only observations carry no picture, so they are not recorded. */
+    @NodeOnlyObservation
+    override suspend fun observeNodesUnsafeForSecurity(): ScreenState = delegate.observeNodesUnsafeForSecurity()
 
     override suspend fun perform(action: Action): ActionResult = delegate.perform(action)
 

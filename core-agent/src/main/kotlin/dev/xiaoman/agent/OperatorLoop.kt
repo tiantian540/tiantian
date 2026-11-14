@@ -14,8 +14,10 @@ import dev.xiaoman.api.Device
 import dev.xiaoman.api.GuardContext
 import dev.xiaoman.api.LlmClient
 import dev.xiaoman.api.LlmException
+import dev.xiaoman.api.NodeOnlyObservation
 import dev.xiaoman.api.ScreenState
 import dev.xiaoman.api.Sentinel
+import dev.xiaoman.api.UiNode
 import dev.xiaoman.api.UserChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -23,6 +25,9 @@ import kotlinx.coroutines.delay
 /**
  * The operator loop of docs/ARCHITECTURE.md: observe, prompt the operator model, parse, gate
  * through Sentinel, perform, detect stuck screens. Also hosts single-step and screen checks used by flows.
+ *
+ * @param metrics optional receiver of one timing line per loop iteration and per executed action.
+ *   Diagnostic only: it never changes what the loop does.
  */
 internal class OperatorLoop(
     private val operator: LlmClient,
@@ -30,6 +35,7 @@ internal class OperatorLoop(
     private val sentinel: Sentinel,
     private val users: UserChannel,
     private val config: AgentConfig,
+    private val metrics: ((String) -> Unit)? = null,
 ) {
     /**
      * Runs until finish, failure or [maxSteps] iterations. [subGoal] replaces the task goal as the
@@ -49,9 +55,56 @@ internal class OperatorLoop(
         var sameAfterActing = 0
         var warnedStuck = false
 
+        /**
+         * One local attempt for a constrained step: [LocalPicker] chooses a node, then the normal
+         * `execute` (Sentinel, approval, perform) runs it. Returns the finished outcome on success,
+         * or null plus the reason to print on the model line. Never throws: any doubt falls back.
+         */
+        suspend fun tryFastStep(
+            iteration: Int,
+            observeMs: Long,
+            constraint: StepConstraint,
+            screen: ScreenState,
+            fingerprint: String,
+        ): Pair<LoopOutcome?, String> {
+            val pick = LocalPicker.pick(constraint.kind, constraint.target, screen)
+                ?: return null to "no_unique_match"
+            val action = fastAction(constraint, pick.node) ?: return null to "no_unique_match"
+            report(
+                "op step=$iteration observe=${observeMs}ms select=local reason=${pick.reason} " +
+                    "nodes=${screen.nodes.size} pkg=${screen.packageName} secure=${screen.secure}",
+            )
+            task.emit(AgentEvent.StepPlanned(task.taskId, task.steps, action))
+            val index = task.steps
+            return when (val executed = execute(task, action, screen)) {
+                is Executed.Blocked -> {
+                    feedback += Prompts.blocked(executed.decision)
+                    history += Prompts.stepLine(index, ScreenText.describe(action), "被拦截：${executed.decision.reason}")
+                    null to "local_blocked"
+                }
+                is Executed.Done -> {
+                    val result = executed.result
+                    history += Prompts.stepLine(
+                        index, ScreenText.describe(action),
+                        if (result.ok) "成功" else "失败：${result.message ?: "未知原因"}",
+                    )
+                    acted = true
+                    actedOn = fingerprint
+                    if (result.ok) {
+                        LoopOutcome(true, ScreenText.describe(action)) to pick.reason
+                    } else {
+                        feedback += "上一步执行失败：${result.message ?: "未知原因"}"
+                        null to "local_failed"
+                    }
+                }
+            }
+        }
+
         for (iteration in 0 until maxSteps) {
             if (task.stop.stopped) return LoopOutcome(false, Prompts.STOPPED)
+            val observeStartedAt = System.nanoTime()
             val screen = device.observe()
+            val observeMs = elapsedMs(observeStartedAt)
             screen.packageName?.let { task.lastPackage = it }
 
             if (screen.secure) {
@@ -74,7 +127,22 @@ internal class OperatorLoop(
                 feedback += Prompts.STUCK_WARNING
             }
 
+            // Local fast path: only for flow steps whose target is already written down. It picks a
+            // node; Sentinel, approval and perform below are exactly the normal path. Any doubt or
+            // failure falls through to the model on this same screen.
+            var selectReason = when {
+                constraint == null -> "no_constraint"
+                !config.localFastPath -> "disabled"
+                else -> "no_unique_match"
+            }
+            if (config.localFastPath && constraint != null) {
+                val (done, reason) = tryFastStep(iteration, observeMs, constraint, screen, fp)
+                selectReason = reason
+                if (done != null) return done
+            }
+
             val request = operatorRequest(task, subGoal, constraint, screen, history, feedback)
+            val modelStartedAt = System.nanoTime()
             val reply = try {
                 completeWithRetry(request)
             } catch (e: LlmException) {
@@ -83,6 +151,11 @@ internal class OperatorLoop(
                 return LoopOutcome(false, message)
             }
             feedback.clear()
+            report(
+                "op step=$iteration observe=${observeMs}ms select=model reason=$selectReason " +
+                    "model=${elapsedMs(modelStartedAt)}ms " +
+                    "nodes=${screen.nodes.size} pkg=${screen.packageName} secure=${screen.secure}",
+            )
 
             var action = when (val parsed = OperatorReplyParser.parse(reply.text)) {
                 is ParsedReply.Error -> {
@@ -152,28 +225,50 @@ internal class OperatorLoop(
 
     /** Gates [action] through Sentinel and performs it; emits StepBlocked or StepExecuted. */
     suspend fun execute(task: TaskRun, action: Action, screen: ScreenState?): Executed {
+        val startedAt = System.nanoTime()
+        var authMs = -1L
+        var approvalMs = -1L
+        var performMs = -1L
+        fun reportExec(ok: Boolean?) {
+            report(
+                "exec step=${task.steps} auth=${if (authMs >= 0) "${authMs}ms" else "?"} " +
+                    "approval=${if (approvalMs >= 0) "${approvalMs}ms" else "?"} " +
+                    "perform=${if (performMs >= 0) "${performMs}ms" else "?"} " +
+                    "total=${elapsedMs(startedAt)}ms ok=${ok ?: "?"} action=${action::class.simpleName}",
+            )
+        }
+
         val context = GuardContext(task.taskId, task.goal, task.skill, screen, task.steps)
         val needsConfirmation = sentinel.guard(context, action) is Decision.Ask
         if (!sentinel.authorize(context, action)) {
+            authMs = elapsedMs(startedAt)
             val decision = sentinel.guard(context, action).let { if (it is Decision.Allow) Decision.Deny("未获授权") else it }
             task.emit(AgentEvent.StepBlocked(task.taskId, task.steps, action, decision))
+            reportExec(false)
             return Executed.Blocked(decision)
         }
+        authMs = elapsedMs(startedAt)
         if (task.stop.stopped) {
             val decision = Decision.Deny(Prompts.STOPPED)
             task.emit(AgentEvent.StepBlocked(task.taskId, task.steps, action, decision))
+            reportExec(false)
             return Executed.Blocked(decision)
         }
         if (needsConfirmation && !awaitApprovalScreen(task, screen)) {
+            approvalMs = elapsedMs(startedAt) - authMs
             val decision = Decision.Deny("确认期间画面发生变化，未执行原动作；请返回目标应用，重新观察和定位后再确认。")
             task.emit(AgentEvent.StepBlocked(task.taskId, task.steps, action, decision))
+            reportExec(false)
             return Executed.Blocked(decision)
         }
+        approvalMs = if (needsConfirmation) elapsedMs(startedAt) - authMs else 0L
         if (task.stop.stopped) {
             val decision = Decision.Deny(Prompts.STOPPED)
             task.emit(AgentEvent.StepBlocked(task.taskId, task.steps, action, decision))
+            reportExec(false)
             return Executed.Blocked(decision)
         }
+        val performStartedAt = System.nanoTime()
         val result = try {
             device.perform(action)
         } catch (e: CancellationException) {
@@ -181,20 +276,27 @@ internal class OperatorLoop(
         } catch (e: Exception) {
             ActionResult(false, e.message ?: e::class.simpleName)
         }
+        performMs = elapsedMs(performStartedAt)
         task.emit(AgentEvent.StepExecuted(task.taskId, task.steps, action, result))
         task.steps++
         if (result.ok) {
             if (action is Action.LaunchApp && task.launchedPackage == null) task.launchedPackage = action.packageName
             task.addPath(ScreenText.pathLabel(action, screen))
         }
+        reportExec(result.ok)
         return Executed.Done(result)
     }
 
     /** App-switch animations can outlast the approval card. Never tap until the original UI returns. */
+    @OptIn(NodeOnlyObservation::class)
     private suspend fun awaitApprovalScreen(task: TaskRun, before: ScreenState?): Boolean {
         repeat(5) { attempt ->
             if (task.stop.stopped) return false
-            val after = device.observe()
+            // The first check keeps a real screenshot so FLAG_SECURE is still detected. Retries only
+            // compare the node tree, which lets them skip the one-screenshot-per-second limit.
+            // The opt-in above is deliberate: a nodes-only retry cannot see FLAG_SECURE, so this
+            // function must never treat it as a secure-screen check.
+            val after = if (attempt == 0) device.observe() else device.observeNodesUnsafeForSecurity()
             if (after.secure) return false
             if (ScreenText.matchesApprovalScreen(before, after)) return true
             if (attempt < 4) delay(300)
@@ -227,6 +329,15 @@ internal class OperatorLoop(
             return LoopOutcome(ok, if (ok) (reason ?: expectation) else Prompts.assertFailed(expectation, reason))
         }
         return LoopOutcome(false, Prompts.assertFailed(expectation, null))
+    }
+
+    /** Flow constraints are `tap`/`type`; a `type` step without text stays with the model. */
+    private fun fastAction(constraint: StepConstraint, node: UiNode): Action? = when (constraint.kind) {
+        "tap" -> Action.Tap(nodeId = node.id, target = constraint.target, reason = FAST_REASON)
+        "type" -> constraint.text?.let {
+            Action.TypeText(text = it, nodeId = node.id, target = constraint.target, reason = FAST_REASON)
+        }
+        else -> null
     }
 
     /** Retry a transient model failure once; account/configuration failures need intervention. */
@@ -267,7 +378,19 @@ internal class OperatorLoop(
         listOfNotNull(ContentPart.Text(text), screen.screenshotPng?.let { ContentPart.ImagePng(it) }),
     )
 
+    /** Diagnostic only: a throwing receiver must never change what the loop does. */
+    private fun report(line: String) {
+        val sink = metrics ?: return
+        try {
+            sink(line)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun elapsedMs(startNanos: Long): Long = (System.nanoTime() - startNanos) / 1_000_000
+
     companion object {
         const val PARSE_FAILURE_LIMIT = 3
+        private const val FAST_REASON = "本地快路径：唯一匹配"
     }
 }
