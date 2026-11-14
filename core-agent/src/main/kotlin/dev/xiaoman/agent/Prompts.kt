@@ -70,8 +70,15 @@ action.type 可选：
 - wait：{"type":"wait","millis":1000}
 - ask_user：{"type":"ask_user","question":"...","takeover":false}，需要用户回答问题或接管（登录、验证码）时使用
 - finish：{"type":"finish","success":true,"summary":"结果说明"}，目标完成或确定无法完成时使用
-坐标是归一化的 0..1000（左上角为原点）。节点列表里有目标元素时优先用 nodeId。
-target 写清楚操作对象的文字，例如 "确认呼叫 按钮"。付款、发送等操作会由安全模块请用户确认。"""
+坐标是归一化的 0..1000（左上角为原点）。节点列表里有目标元素时优先用 nodeId 点元素本身；只能用 point 时落在元素范围内，不要点空白处。
+target 写清楚操作对象的文字，例如 "确认呼叫 按钮"。付款、发送等操作会由安全模块请用户确认。
+
+## 操作纪律
+- 先看节点列表和截图再决定，不要凭记忆猜界面；不确定时先观察或 wait，不要乱点。
+- 每步之后确认界面确有变化；没有变化就换一种做法，不要重复同一个操作。
+- 输入前先点输入框让它获得焦点，输入后核对文字确实进了输入框。
+- 页面可能还在加载时不要连续操作，先 wait 或再看一眼。
+- 同一做法连续两次没有进展就停下，用 finish success=false 说明卡在哪一步。"""
 
     /** [OPERATOR_SYSTEM] plus optional platform notes from [dev.xiaoman.api.AgentConfig.operatorNotes]. */
     fun operatorSystem(notes: String): String =
