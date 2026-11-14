@@ -39,6 +39,7 @@ import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowAccessibilityService
 import org.robolectric.shadows.ShadowWindowManagerImpl
 import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -287,37 +288,48 @@ class OverlayGestureTest {
     }
 
     /**
-     * 1c: synthetic overlap measurement. The screenshot callback is held for 250 ms and the node read
-     * takes 250 ms; the parallel path should cost about max(250, 250) while the serial escape hatch
-     * costs about 500. Numbers are Robolectric/synthetic, not device measurements.
+     * 1c: the parallel path must read the node tree while the screenshot callback is still pending,
+     * the serial escape hatch must finish the screenshot before it starts reading. Asserted on the
+     * observable ordering, not on wall-clock time: Robolectric's frozen clock and the one-second
+     * screenshot throttle make millisecond comparisons meaningless here.
      */
-    @Test fun parallelObserveOverlapsTheNodeReadWithTheScreenshotCallback() = runBlocking {
+    @Test fun parallelObserveReadsNodesWhileTheScreenshotCallbackIsPending() = runBlocking {
         val controller = Robolectric.buildService(XiaomanAccessibilityService::class.java).create()
         val service = controller.get()
         try {
-            val parallel = measureObserve(service, serial = false)
-            val serial = measureObserve(service, serial = true)
-            println("synthetic overlap: parallel=${parallel}ms serial=${serial}ms")
-            assertTrue(parallel + 100 < serial, "parallel=${parallel}ms serial=${serial}ms")
+            val parallelPending = screenshotPendingDuringNodeRead(service, serial = false)
+            val serialPending = screenshotPendingDuringNodeRead(service, serial = true)
+            println("screenshot pending during node read: parallel=$parallelPending serial=$serialPending")
+            assertTrue("并发路径读节点时截图回调应仍在进行中", parallelPending)
+            assertFalse("串行路径读节点时截图回调应已完成", serialPending)
         } finally {
             GestureShadow.reset()
             controller.destroy()
         }
     }
 
-    private suspend fun measureObserve(service: XiaomanAccessibilityService, serial: Boolean): Long = coroutineScope {
+    /** Runs one observation and returns whether a screenshot callback was still pending at node read. */
+    private suspend fun screenshotPendingDuringNodeRead(
+        service: XiaomanAccessibilityService,
+        serial: Boolean,
+    ): Boolean = coroutineScope {
         val hold = CompletableDeferred<Unit>()
+        var pendingAtNodeRead = false
         GestureShadow.holdScreenshot = hold
-        GestureShadow.readRoot = { Thread.sleep(NODE_READ_MS); null }
-        val startedAt = System.nanoTime()
+        GestureShadow.readRoot = {
+            pendingAtNodeRead = GestureShadow.pendingScreenshots.get() > 0
+            Thread.sleep(NODE_READ_MS)
+            null
+        }
         val job = launch {
             AccessibilityDevice({ service }, service, settleDelayMs = 0, serialObserve = serial).observe()
         }
+        // Hold the callback open long enough for the node read to happen while it is in flight.
         delay(CALLBACK_HOLD_MS)
         hold.complete(Unit)
         job.join()
         GestureShadow.holdScreenshot = null
-        (System.nanoTime() - startedAt) / 1_000_000
+        pendingAtNodeRead
     }
 
     private fun checkGestures(cancel: Boolean) = runTest {
@@ -369,14 +381,19 @@ class OverlayGestureTest {
         @Implementation
         override fun takeScreenshot(displayId: Int, executor: Executor, callback: AccessibilityService.TakeScreenshotCallback) {
             screenshotCalls++
+            pendingScreenshots.incrementAndGet()
             events += "screenshot"
             val success = screenshotSuccess
             val hold = holdScreenshot
             val deliver = Runnable {
-                if (success != null) {
-                    callback.onSuccess(success())
-                } else {
-                    callback.onFailure(AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW)
+                try {
+                    if (success != null) {
+                        callback.onSuccess(success())
+                    } else {
+                        callback.onFailure(AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW)
+                    }
+                } finally {
+                    pendingScreenshots.decrementAndGet()
                 }
             }
             if (hold == null) executor.execute(deliver) else hold.invokeOnCompletion { executor.execute(deliver) }
@@ -396,6 +413,8 @@ class OverlayGestureTest {
             var checkAndCancel: () -> Boolean = { false }
             var readRoot: () -> AccessibilityNodeInfo? = { null }
             var screenshotCalls = 0
+            /** Screenshots requested but whose callback has not returned yet. */
+            val pendingScreenshots = AtomicInteger(0)
             /** When set, the screenshot callback fires only after this completes. */
             var holdScreenshot: CompletableDeferred<Unit>? = null
             /** When set, the shadow answers onSuccess instead of onFailure. */
@@ -409,6 +428,7 @@ class OverlayGestureTest {
                 holdScreenshot = null
                 screenshotSuccess = null
                 screenshotCalls = 0
+                pendingScreenshots.set(0)
                 events = mutableListOf()
             }
         }
