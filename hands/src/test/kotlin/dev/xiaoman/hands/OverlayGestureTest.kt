@@ -27,6 +27,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -314,19 +315,27 @@ class OverlayGestureTest {
         serial: Boolean,
     ): Boolean = coroutineScope {
         val hold = CompletableDeferred<Unit>()
+        val nodeReadStarted = CompletableDeferred<Unit>()
         var pendingAtNodeRead = false
         GestureShadow.holdScreenshot = hold
         GestureShadow.readRoot = {
             pendingAtNodeRead = GestureShadow.pendingScreenshots.get() > 0
-            Thread.sleep(NODE_READ_MS)
+            nodeReadStarted.complete(Unit)
             null
         }
         val job = launch {
             AccessibilityDevice({ service }, service, settleDelayMs = 0, serialObserve = serial).observe()
         }
-        // Hold the callback open long enough for the node read to happen while it is in flight.
-        delay(CALLBACK_HOLD_MS)
-        hold.complete(Unit)
+        if (serial) {
+            // Serial: the node read cannot start before the callback returns, so release the hold as
+            // soon as the request is in flight.
+            withTimeoutOrNull(5_000) { while (GestureShadow.pendingScreenshots.get() == 0) delay(5) }
+            hold.complete(Unit)
+        } else {
+            // Parallel: wait for the node read to begin, then let the callback return.
+            withTimeoutOrNull(5_000) { nodeReadStarted.await() }
+            hold.complete(Unit)
+        }
         job.join()
         GestureShadow.holdScreenshot = null
         pendingAtNodeRead
@@ -432,10 +441,5 @@ class OverlayGestureTest {
                 events = mutableListOf()
             }
         }
-    }
-
-    private companion object {
-        const val CALLBACK_HOLD_MS = 250L
-        const val NODE_READ_MS = 250L
     }
 }
