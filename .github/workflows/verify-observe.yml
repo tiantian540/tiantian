@@ -39,8 +39,9 @@ jobs:
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
       - uses: gradle/actions/setup-gradle@v4
-      - name: core-agent 与 hands 单元测试
-        run: ./gradlew :core-agent:test :hands:testDebugUnitTest --console=plain --stacktrace
+      # --rerun-tasks：不让 hands 命中构建缓存，保证每轮都是真实执行。
+      - name: core-agent、hands 与 app 单元测试
+        run: ./gradlew :core-agent:test :hands:testDebugUnitTest :app:testDebugUnitTest --rerun-tasks --console=plain --stacktrace
       - name: 汇总用例结果
         if: always()
         run: |

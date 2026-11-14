@@ -200,6 +200,7 @@ internal class ChatTools(
             ),
             emit,
         )
+        emit(AgentEvent.ToolCalled(taskId, AgentTools.AUTHOR_SKILL, true, "已保存技能 ${written.name}"))
         return buildJsonObject {
             put("ok", true)
             put("name", written.name)
